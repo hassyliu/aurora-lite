@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f7f3ed">
+  <title>Aurora Lite · 极光中转</title>
+  <link rel="icon" href="/static/favicon.svg?v=warm-light-1" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css?v=0.2.0">
+  <script src="/static/app.js?v=0.2.0" defer></script>
+</head>
+<body>
+  <svg class="icon-defs" aria-hidden="true"><defs>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M12 6.5h5M12 17.5h5"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24"><circle cx="5" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 6h9a4 4 0 0 1 0 8H8a4 4 0 0 0 0 8M12 18h5"/></symbol>
+    <symbol id="i-task" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 9 1 1 2-2m2 1h3m-8 6 1 1 2-2m2 1h3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.5-2L20 8M4 16l2.4 3A7 7 0 0 0 18 17"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v16m-5-5 5 5 5-5"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 20V4m-5 5 5-5 5 5"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 4H5v16h4m5-13 5 5-5 5M9 12h10"/></symbol>
+    <symbol id="i-destination" viewBox="0 0 24 24"><path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="i-grip" viewBox="0 0 24 24"><path d="M8 5h.01M16 5h.01M8 12h.01M16 12h.01M8 19h.01M16 19h.01" stroke-width="3"/></symbol>
+  </defs></svg>
+  <section id="login-view" class="login-view">
+    <div class="login-art" aria-hidden="true"><div class="art-label">AURORA / PRIVATE NETWORK</div><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="aurora-mark large">A</div><div class="art-caption">每一条连接，<br>都由你掌控。</div><div class="art-foot">YOUR NETWORK. YOUR CONTROL.</div></div>
+    <div class="login-side">
+      <div class="login-brand"><span class="aurora-mark">A</span> AURORA <span class="lite">LITE</span></div>
+      <div class="login-copy"><span class="eyebrow">PRIVATE NETWORK CONSOLE</span><h1>连接，从这里开始。</h1><p>你的服务器，你的中转控制台。</p></div>
+      <form id="login-form" class="login-form">
+        <label>管理员账号<input name="username" autocomplete="username" placeholder="输入管理员账号" required maxlength="64"></label>
+        <label>密码<input name="password" type="password" autocomplete="current-password" placeholder="输入密码" required maxlength="256"></label>
+        <div id="login-error" class="form-error" role="alert"></div>
+        <button class="btn primary wide" type="submit">登录控制台 <svg class="icon"><use href="#i-arrow"/></svg></button>
+      </form>
+      <p id="setup-note" class="setup-note" hidden>尚未创建管理员。请先在主控机的项目目录执行 <code>.venv/bin/python -m aurora init</code>。</p>
+      <div class="login-footer"><span class="status-dot"></span> 本地存储 · 私有部署 <span>v0.2.0</span></div>
+    </div>
+  </section>
+  <div id="console" class="console" hidden>
+    <aside class="sidebar">
+      <a href="#overview" class="brand"><span class="aurora-mark">A</span><span>AURORA<small>极光中转 · LITE</small></span></a>
+      <div class="nav-label">工作空间</div>
+      <nav aria-label="主导航">
+        <a href="#overview" data-page="overview"><svg class="icon"><use href="#i-grid"/></svg> 总览 <span class="nav-dot"></span></a>
+        <a href="#servers" data-page="servers"><svg class="icon"><use href="#i-server"/></svg> 服务器 <span id="nav-server-count" class="nav-count">0</span></a>
+        <a href="#destinations" data-page="destinations"><svg class="icon"><use href="#i-destination"/></svg> 落地管理</a>
+        <a href="#tasks" data-page="tasks"><svg class="icon"><use href="#i-task"/></svg> 任务日志</a>
+        <a href="#settings" data-page="settings"><svg class="icon"><use href="#i-settings"/></svg> 设置</a>
+      </nav>
+      <div class="sidebar-bottom"><div class="local-card"><span class="status-dot"></span><strong>属于你的网络</strong><p>iptables & GOST<br>原生运行，轻装上阵。</p></div><div class="profile"><span class="avatar">A</span><div><strong id="admin-name">管理员</strong><small>个人工作空间</small></div><button id="logout" class="icon-btn" aria-label="退出登录"><svg class="icon"><use href="#i-logout"/></svg></button></div></div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar"><div class="breadcrumb-trail"><span class="breadcrumb">工作空间</span><span class="slash">/</span><span id="breadcrumb-current">总览</span></div><div class="topbar-right"><span id="connection-state"><span class="status-dot"></span> 面板已连接</span><span class="separator"></span><span id="clock"></span></div></header>
+      <main>
+        <div class="page-heading"><div><span class="eyebrow" id="page-kicker">NETWORK OVERVIEW</span><h1 id="page-title">网络总览</h1><p id="page-description">让每一条连接，都清晰可见。</p></div><div class="page-actions"><a id="back-to-servers" class="btn secondary back-link" href="#servers" hidden><svg class="icon"><use href="#i-arrow"/></svg>返回服务器</a><button id="refresh" class="btn secondary"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button><button id="primary-action" class="btn primary"><svg class="icon"><use href="#i-plus"/></svg><span>添加服务器</span></button></div></div>
+        <div id="load-error" class="notice danger" role="alert" hidden></div>
+        <section id="page-content" aria-live="polite"></section>
+        <footer class="page-footer"><span>AURORA LITE <span class="muted">/ 个人中转控制台</span></span><span>数据留在自己的服务器上</span></footer>
+      </main>
+    </div>
+  </div>
+  <dialog id="editor" class="modal"><form id="editor-form"><div class="modal-heading"><div><span class="eyebrow" id="editor-kicker">CONFIGURATION</span><h2 id="editor-title"></h2></div><button type="button" class="close-btn" data-close="editor" aria-label="关闭">×</button></div><div id="editor-body"></div><p id="editor-error" class="form-error" role="alert"></p><div class="modal-footer"><button type="button" class="btn secondary" data-close="editor">取消</button><button type="submit" class="btn primary">保存配置</button></div></form></dialog>
+  <dialog id="viewer" class="modal viewer"><div class="modal-heading"><div><span class="eyebrow">DETAILS</span><h2 id="viewer-title">详情</h2></div><button class="close-btn" data-close="viewer" aria-label="关闭">×</button></div><pre id="viewer-content"></pre><div class="modal-footer"><button class="btn primary" data-close="viewer">完成</button></div></dialog>
+  <dialog id="confirmation" class="modal small"><div class="modal-heading"><h2 id="confirm-title">确认操作</h2></div><p id="confirm-message"></p><div class="modal-footer"><button class="btn secondary" data-close="confirmation">取消</button><button id="confirm-yes" class="btn primary">确认执行</button></div></dialog>
+  <dialog id="inspector" class="modal inspector" aria-labelledby="inspection-title"><div class="modal-heading"><div><span class="eyebrow">FORWARDING CHECK</span><h2 id="inspection-title">状态检测</h2></div><button class="close-btn" data-close="inspector" aria-label="关闭">×</button></div><div id="inspection-content" aria-live="polite"></div><div class="modal-footer"><button class="btn secondary" data-close="inspector">关闭</button><button id="inspection-repeat" class="btn primary" data-rule-action="diagnose">重新检测</button></div></dialog>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+</body>
+</html>

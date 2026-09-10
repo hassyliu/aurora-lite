@@ -1,0 +1,22 @@
+.venv/
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.zip
+.build-venv/
+build/
+dist/
+*.spec
+
+# Local credentials and runtime state
+settings.json
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+master.key
+*.pem
+*.key
+work/

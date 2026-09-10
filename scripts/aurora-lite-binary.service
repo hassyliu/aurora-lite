@@ -1,0 +1,22 @@
+[Unit]
+Description=Aurora Lite native binary panel
+After=network.target
+
+[Service]
+Type=simple
+User=aurora-panel
+Group=aurora-panel
+WorkingDirectory=/opt/aurora-lite-panel
+ExecStart=/opt/aurora-lite-panel/aurora-lite --data-dir /opt/aurora-lite-panel/data serve
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/aurora-lite-panel/data
+TimeoutStopSec=780
+
+[Install]
+WantedBy=multi-user.target
