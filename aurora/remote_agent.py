@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import urllib.request
 
@@ -22,12 +23,41 @@ ROOT = Path('/opt/aurora-lite')
 CONFIG = Path('/etc/aurora-lite')
 UNITS = Path('/etc/systemd/system')
 GOST_VERSION = '3.3.0'
+REPORT_PROGRESS = False
+
+
+def progress(message):
+    if REPORT_PROGRESS:
+        print(json.dumps({'progress': str(message)}, ensure_ascii=True), flush=True)
 
 
 def run(args, check=True, timeout=60):
-    result = subprocess.run([str(a) for a in args], capture_output=True, text=True,
-                            timeout=timeout, env={**os.environ, 'LC_ALL': 'C',
-                                                'DEBIAN_FRONTEND': 'noninteractive'})
+    command = [str(a) for a in args]
+    env = {**os.environ, 'LC_ALL': 'C', 'DEBIAN_FRONTEND': 'noninteractive'}
+    if REPORT_PROGRESS:
+        progress('$ ' + ' '.join(command))
+        with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, errors='replace', env=env) as process:
+            output = []
+
+            def read_output():
+                for line in process.stdout:
+                    output.append(line)
+                    progress(line.rstrip())
+
+            reader = threading.Thread(target=read_output, daemon=True)
+            reader.start()
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                raise
+            finally:
+                reader.join(timeout=5)
+            result = subprocess.CompletedProcess(command, process.returncode, ''.join(output), '')
+    else:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, env=env)
     if check and result.returncode:
         raise RuntimeError(f"{args[0]} 执行失败: {(result.stderr or result.stdout)[-3000:]}")
     return result
@@ -224,6 +254,7 @@ def prepare():
         raise RuntimeError('仅支持使用 systemd 的 Debian / Ubuntu')
     run(['apt-get', 'update'], timeout=300)
     run(['apt-get', 'install', '-y', 'iptables', 'conntrack', 'curl', 'ca-certificates', 'iproute2'], timeout=300)
+    progress('正在下载并校验 GOST ' + GOST_VERSION)
     download_gost()
     return {'message': f'iptables、conntrack 与 GOST {GOST_VERSION} 已安装', 'state': 'online'}
 
@@ -411,7 +442,24 @@ def finish_diagnosis(server, rule, result):
     return result
 
 
+def saved_rule(rule):
+    path = CONFIG / 'rules' / f"{rule['id']}.json"
+    if not path.exists():
+        return rule
+    saved = validate_rule(json.loads(path.read_text()))
+    if saved['id'] != rule['id']:
+        raise RuntimeError('远程规则 ID 不一致，已停止操作')
+    return saved
+
+
+def same_forwarding(first, second):
+    return all(first.get(key) == second.get(key) for key in
+               ('method', 'protocol', 'listen_ip', 'listen_port', 'target_host', 'target_port'))
+
+
 def stop(rule, remove=False):
+    # The on-disk rule describes what was actually deployed, including after an interrupted edit.
+    rule = saved_rule(rule)
     name = service_name(rule)
     unit_path = UNITS / name
     if unit_path.exists():
@@ -434,8 +482,12 @@ def apply(rule, source):
             raise RuntimeError(f'缺少 {binary}，请先执行“安装中转组件”')
     if rule['method'] == 'gost' and not (ROOT / 'bin' / 'gost').exists():
         raise RuntimeError('缺少 GOST，请先执行“安装中转组件”')
-    if (UNITS / name).exists():
-        run(['systemctl', 'stop', name])
+    if (CONFIG / 'rules' / f"{rule['id']}.json").exists():
+        progress('正在停止并清理上一版转发配置…')
+        stop(rule, remove=True)
+    elif (UNITS / name).exists():
+        raise RuntimeError('存在服务但缺少对应规则配置，请先恢复远程规则文件再更新')
+    progress('正在写入并启动新转发配置…')
     write_file(ROOT / 'agent.py', source, 0o700)
     write_file(CONFIG / 'rules' / f"{rule['id']}.json", json.dumps(rule))
     if rule['method'] == 'gost':
@@ -466,6 +518,8 @@ def apply(rule, source):
 
 
 def dispatch(request):
+    global REPORT_PROGRESS
+    REPORT_PROGRESS = bool(request.get('progress'))
     if platform.system() != 'Linux' or os.geteuid() != 0:
         raise RuntimeError('中转操作需要 Linux root 或免密 sudo 权限')
     action = request['action']
@@ -473,6 +527,7 @@ def dispatch(request):
         result = {'state': 'online', 'message': 'SSH 与管理员权限正常',
                   'hostname': platform.node(), 'systemd': shutil.which('systemctl') is not None,
                   'iptables': shutil.which('iptables') is not None,
+                  'conntrack': shutil.which('conntrack') is not None,
                   'gost': (ROOT / 'bin' / 'gost').exists()}
     elif action == 'prepare':
         result = prepare()
@@ -483,7 +538,11 @@ def dispatch(request):
         elif action in ('stop', 'remove'):
             result = stop(rule, remove=action == 'remove')
         elif action == 'collect':
-            result = collect(rule)
+            deployed = saved_rule(rule)
+            result = collect(deployed)
+            result['counters_valid'] = result['state'] == 'running'
+            if not same_forwarding(rule, deployed):
+                result.update(state='error', error='新配置尚未成功下发，远程仍保留上一版配置，请重新下发')
         elif action == 'diagnose':
             result = diagnose(rule)
         elif action == 'logs':

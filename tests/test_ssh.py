@@ -38,6 +38,8 @@ class SSHTransportTests(unittest.TestCase):
         scripts=[]
         ready=threading.Event()
         done=threading.Event()
+        progress_seen=threading.Event()
+        progress_before_exit=[]
         listener=socket.socket()
         listener.bind(('127.0.0.1',0))
         listener.listen(2)
@@ -63,6 +65,10 @@ class SSHTransportTests(unittest.TestCase):
                         if not part:break
                         source.extend(part)
                     scripts.append(source.decode())
+                    progress=json.dumps({'progress':'正在执行远程操作'},ensure_ascii=False).encode()+b'\n'
+                    channel.sendall(progress[:17])
+                    channel.sendall(progress[17:])
+                    progress_before_exit.append(progress_seen.wait(2))
                     channel.sendall(json.dumps({'state':'online','message':'test transport OK'}).encode()+b'\n')
                     channel.send_exit_status(0)
                     channel.shutdown_write()
@@ -82,8 +88,15 @@ class SSHTransportTests(unittest.TestCase):
             remote=SSHRemote(store)
             server=dict(host='127.0.0.1',port=port,username='root',auth_type='password',
                         credential=store.seal('test-ssh-secret'),passphrase='',fingerprint=fingerprint(key))
-            result=remote.execute(server,'check')
+            messages=[]
+            def report(message):
+                messages.append(message)
+                if message=='正在执行远程操作':
+                    progress_seen.set()
+            result=remote.execute(server,'check',on_progress=report)
             self.assertEqual(result['state'],'online')
+            self.assertEqual(progress_before_exit,[True])
+            self.assertIn('正在执行远程操作',messages)
             self.assertEqual(handlers[0].command,b'python3 -')
             self.assertNotIn('test-ssh-secret',scripts[0])
             compile(scripts[0],'<generated-ssh-request>','exec')

@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#f7f3ed">
   <title>Aurora Lite · 极光中转</title>
   <link rel="icon" href="/static/favicon.svg?v=warm-light-1" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css?v=0.2.0">
-  <script src="/static/app.js?v=0.2.0" defer></script>
+  <link rel="stylesheet" href="/static/style.css?v=0.3.0">
+  <script src="/static/app.js?v=0.3.0" defer></script>
 </head>
 <body>
   <svg class="icon-defs" aria-hidden="true"><defs>
@@ -38,7 +38,7 @@
         <button class="btn primary wide" type="submit">登录控制台 <svg class="icon"><use href="#i-arrow"/></svg></button>
       </form>
       <p id="setup-note" class="setup-note" hidden>尚未创建管理员。请先在主控机的项目目录执行 <code>.venv/bin/python -m aurora init</code>。</p>
-      <div class="login-footer"><span class="status-dot"></span> 本地存储 · 私有部署 <span>v0.2.0</span></div>
+      <div class="login-footer"><span class="status-dot"></span> 本地存储 · 私有部署 <span>v0.3.0</span></div>
     </div>
   </section>
   <div id="console" class="console" hidden>
@@ -65,7 +65,7 @@
     </div>
   </div>
   <dialog id="editor" class="modal"><form id="editor-form"><div class="modal-heading"><div><span class="eyebrow" id="editor-kicker">CONFIGURATION</span><h2 id="editor-title"></h2></div><button type="button" class="close-btn" data-close="editor" aria-label="关闭">×</button></div><div id="editor-body"></div><p id="editor-error" class="form-error" role="alert"></p><div class="modal-footer"><button type="button" class="btn secondary" data-close="editor">取消</button><button type="submit" class="btn primary">保存配置</button></div></form></dialog>
-  <dialog id="viewer" class="modal viewer"><div class="modal-heading"><div><span class="eyebrow">DETAILS</span><h2 id="viewer-title">详情</h2></div><button class="close-btn" data-close="viewer" aria-label="关闭">×</button></div><pre id="viewer-content"></pre><div class="modal-footer"><button class="btn primary" data-close="viewer">完成</button></div></dialog>
+  <dialog id="viewer" class="modal viewer"><div class="modal-heading"><div><span class="eyebrow">DETAILS</span><h2 id="viewer-title">详情</h2></div><button class="close-btn" data-close="viewer" aria-label="关闭">×</button></div><p id="viewer-status" class="form-hint" role="status"></p><div id="viewer-details" hidden></div><pre id="viewer-content"></pre><div class="modal-footer"><button class="btn primary" data-close="viewer">完成</button></div></dialog>
   <dialog id="confirmation" class="modal small"><div class="modal-heading"><h2 id="confirm-title">确认操作</h2></div><p id="confirm-message"></p><div class="modal-footer"><button class="btn secondary" data-close="confirmation">取消</button><button id="confirm-yes" class="btn primary">确认执行</button></div></dialog>
   <dialog id="inspector" class="modal inspector" aria-labelledby="inspection-title"><div class="modal-heading"><div><span class="eyebrow">FORWARDING CHECK</span><h2 id="inspection-title">状态检测</h2></div><button class="close-btn" data-close="inspector" aria-label="关闭">×</button></div><div id="inspection-content" aria-live="polite"></div><div class="modal-footer"><button class="btn secondary" data-close="inspector">关闭</button><button id="inspection-repeat" class="btn primary" data-rule-action="diagnose">重新检测</button></div></dialog>
   <div id="toasts" class="toasts" aria-live="polite"></div>

@@ -23,7 +23,7 @@ class FakeRemote:
         self.calls = []
         self.fail = False
 
-    def execute(self, server, action, rule=None):
+    def execute(self, server, action, rule=None, on_progress=None):
         self.calls.append((server['id'], action, rule['id'] if rule else None))
         if self.fail:
             raise RuntimeError('SSH connection failed')
@@ -95,27 +95,37 @@ class PanelTests(unittest.TestCase):
     def test_port_conflicts_and_ssh_protection(self):
         sid, _ = self.server()
         _, data = self.rule(sid)
+        self.worker.run_once()
         self.assertEqual(self.client.post('/api/rules', json={**data,'method':'gost'}).status_code, 409)
         self.assertEqual(self.client.post('/api/rules', json={**data,'listen_port':22}).status_code, 422)
         self.assertEqual(self.client.post('/api/rules', json={**data,'protocol':'udp'}).status_code, 200)
+        self.worker.run_once()
         self.assertEqual(self.client.post('/api/rules', json={**data,'listen_ip':'::','target_host':'2001:db8::10'}).status_code, 409)
 
     def test_native_rule_lifecycle_and_busy_edit(self):
         sid, _ = self.server()
         rid, data = self.rule(sid)
-        result = self.client.post(f'/api/rules/{rid}/apply')
-        self.assertEqual(result.status_code, 200)
+        self.assertEqual(self.store.one('SELECT desired FROM rules WHERE id=?', (rid,))['desired'], 'running')
+        self.assertEqual(self.store.one('SELECT action FROM jobs WHERE rule_id=?', (rid,), jobs=True)['action'], 'apply')
         self.assertEqual(self.client.put(f'/api/rules/{rid}', json=data).status_code, 409)
         self.assertEqual(self.client.post(f'/api/rules/{rid}/stop').status_code, 409)
         self.worker.run_once()
         rule = self.store.one('SELECT * FROM rules WHERE id=?', (rid,))
         self.assertEqual(rule['state'], 'running')
         self.assertEqual(rule['bytes_in'], 120)
-        self.assertEqual(self.client.put(f'/api/rules/{rid}', json=data).status_code, 409)
+        edited = self.client.put(f'/api/rules/{rid}', json={**data, 'target_port': 8443})
+        self.assertEqual(edited.status_code, 200)
+        self.assertTrue(edited.json()['task_id'])
+        self.worker.run_once()
+        self.assertEqual(self.store.one('SELECT target_port FROM rules WHERE id=?', (rid,))['target_port'], 8443)
         self.client.post(f'/api/rules/{rid}/stop')
         self.worker.run_once()
         self.assertEqual(self.store.one('SELECT * FROM rules WHERE id=?', (rid,))['bytes_in'], 120)
-        self.assertEqual(self.client.put(f'/api/rules/{rid}', json={**data,'target_port':8443}).status_code, 200)
+        paused = self.client.put(f'/api/rules/{rid}', json={**data,'target_port':9443})
+        self.assertEqual(paused.status_code, 200)
+        self.assertIsNone(paused.json()['task_id'])
+        self.assertEqual(self.store.one('SELECT desired FROM rules WHERE id=?', (rid,))['desired'], 'stopped')
+        self.assertFalse(self.worker.run_once())
         self.assertEqual(self.client.delete(f'/api/servers/{sid}').status_code, 409)
         self.client.post(f'/api/rules/{rid}/remove')
         self.worker.run_once()
@@ -126,7 +136,7 @@ class PanelTests(unittest.TestCase):
         sid, _ = self.server()
         rid, _ = self.rule(sid)
         self.remote.fail = True
-        task = self.client.post(f'/api/rules/{rid}/apply').json()['task_id']
+        task = self.store.one('SELECT id FROM jobs WHERE rule_id=?', (rid,), jobs=True)['id']
         self.worker.run_once()
         self.assertEqual(self.store.one('SELECT * FROM jobs WHERE id=?', (task,), jobs=True)['state'], 'failed')
         self.assertEqual(self.store.one('SELECT state FROM rules WHERE id=?', (rid,))['state'], 'error')
@@ -179,6 +189,100 @@ class PanelTests(unittest.TestCase):
         (Path(self.temp.name)/'master.key').unlink()
         with self.assertRaises(RuntimeError):
             Store(self.temp.name)
+
+    def test_server_order_persists_and_invalid_order_is_atomic(self):
+        first, _ = self.server()
+        second, _ = self.server()
+        self.assertEqual(self.client.put('/api/servers/order', json={'ids': [second, first]}).status_code, 200)
+        self.assertEqual([s['id'] for s in self.client.get('/api/servers').json()], [second, first])
+        self.assertEqual(self.client.put('/api/servers/order', json={'ids': [first]}).status_code, 409)
+        self.assertEqual(self.client.put('/api/servers/order', json={'ids': [first, first]}).status_code, 422)
+        self.assertEqual([s['id'] for s in Store(self.temp.name).rows('SELECT id FROM servers ORDER BY position')], [second, first])
+        third, _ = self.server()
+        self.assertEqual([s['id'] for s in self.client.get('/api/servers').json()], [second, first, third])
+
+    def test_destination_selection_survives_edit_and_deleted_destination_keeps_target(self):
+        sid, _ = self.server()
+        destination = self.client.post('/api/destinations', json={'name': 'Target', 'host': '198.51.100.1', 'port': 443}).json()['id']
+        rid, data = self.rule(sid, destination_id=destination)
+        self.worker.run_once()
+        self.assertEqual(self.client.get('/api/rules').json()[0]['destination_id'], destination)
+        self.assertEqual(self.client.put('/api/rules/' + rid, json={**data, 'name': 'Renamed'}).status_code, 200)
+        self.worker.run_once()
+        self.client.put('/api/destinations/' + destination, json={'name': 'Changed', 'host': '198.51.100.2', 'port': 8443})
+        rule = self.client.get('/api/rules').json()[0]
+        self.assertEqual((rule['destination_id'], rule['target_host'], rule['target_port']), (destination, '198.51.100.1', 443))
+        self.client.delete('/api/destinations/' + destination)
+        rule = self.client.get('/api/rules').json()[0]
+        self.assertIsNone(rule['destination_id'])
+        self.assertEqual(rule['target_host'], '198.51.100.1')
+
+    def test_manual_target_clears_selection_and_invalid_destination_is_rejected(self):
+        sid, _ = self.server()
+        destination = self.client.post('/api/destinations', json={'name': 'Target', 'host': '198.51.100.1', 'port': 443}).json()['id']
+        rid, data = self.rule(sid, destination_id=destination)
+        self.worker.run_once()
+        response = self.client.put('/api/rules/' + rid, json={**data, 'destination_id': 'f'*12})
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.client.put('/api/rules/' + rid, json={**data, 'destination_id': None, 'target_port': 8443}).status_code, 200)
+        self.assertIsNone(self.client.get('/api/rules').json()[0]['destination_id'])
+
+    def test_task_logs_are_readable_while_running_and_credentials_are_redacted(self):
+        sid, _ = self.server()
+        rid, _ = self.rule(sid)
+        task = self.store.one('SELECT id FROM jobs WHERE rule_id=?', (rid,), jobs=True)['id']
+        def remote(server, action, rule=None, on_progress=None):
+            on_progress('Connecting with private-ssh-password')
+            current = self.client.get('/api/tasks/' + task).json()
+            self.assertEqual(current['state'], 'running')
+            self.assertIn('[已隐藏凭据]', current['log'])
+            self.assertNotIn('private-ssh-password', current['log'])
+            return {'state': 'running', 'in': 1, 'out': 2, 'epoch': 'one', 'message': 'done'}
+        with patch.object(self.remote, 'execute', side_effect=remote):
+            self.worker.run_once()
+        final = self.client.get('/api/tasks/' + task).json()
+        self.assertEqual(final['state'], 'succeeded')
+        self.assertIn('done', final['log'])
+        self.assertIn('Connecting', final['log'])
+
+    def test_live_logs_do_not_enqueue_jobs_and_release_reservation_on_failure(self):
+        sid, _ = self.server()
+        rid, _ = self.rule(sid)
+        self.assertEqual(self.client.get('/api/rules/' + rid + '/logs').status_code, 409)
+        self.worker.run_once()
+        count = len(self.client.get('/api/tasks').json())
+        with patch.object(self.remote, 'execute', return_value={'message': 'log private-ssh-password'}):
+            response = self.client.get('/api/rules/' + rid + '/logs')
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('private-ssh-password', response.text)
+        with patch.object(self.remote, 'execute', side_effect=RuntimeError('private-ssh-password')):
+            self.assertEqual(self.client.get('/api/rules/' + rid + '/logs').status_code, 502)
+        self.assertFalse(self.worker.busy(sid))
+        self.assertEqual(len(self.client.get('/api/tasks').json()), count)
+        with TestClient(self.app) as anonymous:
+            self.assertEqual(anonymous.get('/api/rules/' + rid + '/logs').status_code, 401)
+            task_id = self.client.get('/api/tasks').json()[0]['id']
+            self.assertEqual(anonymous.get('/api/tasks/' + task_id).status_code, 401)
+
+    def test_failed_enqueue_restores_rule_edit(self):
+        sid, _ = self.server()
+        rid, data = self.rule(sid)
+        self.worker.run_once()
+        with patch.object(self.worker, 'enqueue', side_effect=RuntimeError('queue unavailable')):
+            with self.assertRaises(RuntimeError):
+                self.client.put('/api/rules/' + rid, json={**data, 'target_port': 9999})
+        self.assertEqual(self.client.get('/api/rules').json()[0]['target_port'], 443)
+
+    def test_stopped_service_sample_does_not_reset_counters(self):
+        sid, _ = self.server()
+        rid, _ = self.rule(sid)
+        self.worker.run_once()
+        server = self.store.one('SELECT * FROM servers WHERE id=?', (sid,))
+        rule = self.store.one('SELECT * FROM rules WHERE id=?', (rid,))
+        with patch.object(self.remote, 'execute', return_value={'state': 'stopped', 'in': 0, 'out': 0, 'epoch': 'boot-one'}):
+            self.worker.sample_rule(server, rule)
+        row = self.store.one('SELECT raw_in,bytes_in FROM rules WHERE id=?', (rid,))
+        self.assertEqual((row['raw_in'], row['bytes_in']), (120, 120))
 
 
 class RuleCompilerTests(unittest.TestCase):

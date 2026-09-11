@@ -40,6 +40,13 @@ class Worker:
         self.store.execute(f'UPDATE {table} SET check_result=? WHERE id=?',
                            (json.dumps(result, ensure_ascii=False), record_id))
 
+    def redact(self, server, text):
+        for field in ('credential', 'passphrase'):
+            secret = self.store.unseal(server[field])
+            if secret:
+                text = text.replace(secret, '[已隐藏凭据]')
+        return text
+
     def recover(self):
         running = self.store.rows("SELECT * FROM jobs WHERE state='running'", jobs=True)
         for job in running:
@@ -65,7 +72,7 @@ class Worker:
 
     def sample_rule(self, server, rule):
         result = self.remote.execute(server, 'collect', rule)
-        if result['state'] == 'running':
+        if result['state'] == 'running' or result.get('counters_valid'):
             self.store.sample(rule['id'], result['in'], result['out'], result['epoch'])
         expected_running = rule['desired'] == 'running'
         error = result.get('error', '') if expected_running else ''
@@ -83,20 +90,31 @@ class Worker:
         server = self.store.one('SELECT * FROM servers WHERE id=?', (job['server_id'],))
         rule = self.store.one('SELECT * FROM rules WHERE id=?', (job['rule_id'],)) if job['rule_id'] else None
         started = time.monotonic()
+        log_text = ''
+        last_log_write = 0
+
+        def log_progress(message, force=False):
+            nonlocal log_text, last_log_write
+            log_text = (log_text + str(message).rstrip() + '\n')[-16000:]
+            if server:
+                log_text = self.redact(server, log_text)
+            if force or time.monotonic() - last_log_write >= .3:
+                self.store.execute('UPDATE jobs SET log=? WHERE id=?', (log_text, job['id']), jobs=True)
+                last_log_write = time.monotonic()
         try:
             if not server or (job['rule_id'] and not rule):
                 raise ValueError('任务引用的服务器或规则不存在')
             action = job['action']
             if rule and action in ('apply', 'stop', 'remove'):
                 # Best-effort final sample before counters reset. Failure never fabricates data.
-                if rule['state'] == 'running':
+                if rule['state'] == 'running' or rule['epoch']:
                     try:
                         self.sample_rule(server, rule)
                     except Exception:
                         logger.info('Final traffic sample unavailable for %s', rule['id'])
                 self.store.execute('UPDATE rules SET desired=? WHERE id=?',
                                    ('running' if action == 'apply' else 'stopped', rule['id']))
-            result = self.remote.execute(server, action, rule)
+            result = self.remote.execute(server, action, rule, on_progress=log_progress)
             if action == 'diagnose':
                 result = finish_diagnosis(server, rule, result)
                 self.save_check('rules', rule['id'], result)
@@ -108,7 +126,7 @@ class Worker:
                     'status': 'passed', 'summary': '连接成功，SSH 认证及管理权限正常',
                     'hostname': result.get('hostname', ''), 'checked_at': time.time(),
                     'latency_ms': round((time.monotonic() - started) * 1000),
-                    'components': {name: bool(result.get(name)) for name in ('systemd', 'iptables', 'gost')},
+                    'components': {name: bool(result.get(name)) for name in ('systemd', 'iptables', 'conntrack', 'gost')},
                 })
             with self.guard:
                 if rule and action == 'remove':
@@ -120,18 +138,17 @@ class Worker:
                         self.store.sample(rule['id'], result['in'], result['out'], result['epoch'])
                 self.store.execute("UPDATE servers SET state='online',last_error='',last_checked=? WHERE id=?",
                                    (time.time(), server['id']))
-                self.store.execute("UPDATE jobs SET state='succeeded',log=?,finished=? WHERE id=?",
-                                   (result.get('message') or json.dumps(result, ensure_ascii=False), time.time(), job['id']), jobs=True)
+                log_progress(result.get('message') or json.dumps(result, ensure_ascii=False), force=True)
+                self.store.execute("UPDATE jobs SET state='succeeded',finished=? WHERE id=?",
+                                   (time.time(), job['id']), jobs=True)
         except Exception as error:
             message = str(error)[-16000:]
             if server:
-                for field in ('credential', 'passphrase'):
-                    secret = self.store.unseal(server[field])
-                    if secret:
-                        message = message.replace(secret, '[已隐藏凭据]')
+                message = self.redact(server, message)
             with self.guard:
-                self.store.execute("UPDATE jobs SET state='failed',log=?,finished=? WHERE id=?",
-                                   (message, time.time(), job['id']), jobs=True)
+                log_progress(message, force=True)
+                self.store.execute("UPDATE jobs SET state='failed',finished=? WHERE id=?",
+                                   (time.time(), job['id']), jobs=True)
                 if job['action'] in ('check', 'diagnose'):
                     self.save_check('rules' if rule else 'servers', rule['id'] if rule else job['server_id'],
                                     {'status': 'unknown' if rule else 'failed', 'summary': '检测未完成' if rule else '连接检查失败',

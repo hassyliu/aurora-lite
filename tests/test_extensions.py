@@ -18,12 +18,16 @@ class InspectionRemote:
         self.fail = False
         self.actions = []
 
-    def execute(self, server, action, rule=None):
+    def execute(self, server, action, rule=None, on_progress=None):
         self.actions.append(action)
         if self.fail:
             raise RuntimeError('Authentication failed: private-test-password')
         if action == 'check':
             return dict(state='online', hostname='relay', systemd=True, iptables=True, gost=False)
+        if action in ('apply', 'collect'):
+            return dict(state='running', **{'in': 10, 'out': 20, 'epoch': 'test'})
+        if action in ('stop', 'remove'):
+            return dict(state='stopped', message='stopped')
         return {'state': 'running', 'checks': [
             {'key': 'target_tcp', 'title': '目标 TCP', 'status': 'failed', 'detail': 'Connection refused'}]}
 
@@ -48,9 +52,12 @@ class ExtensionTests(unittest.TestCase):
         self.temp.cleanup()
 
     def add_rule(self):
-        return self.client.post('/api/rules', json={
+        result = self.client.post('/api/rules', json={
             'server_id': self.sid, 'name': 'Forward', 'method': 'iptables', 'protocol': 'both',
             'listen_port': 28080, 'target_host': '198.51.100.10', 'target_port': 443}).json()['id']
+        self.worker.run_once()
+        self.remote.actions.clear()
+        return result
 
     def test_destination_order_is_atomic_and_preserves_rule_snapshots(self):
         first = self.client.post('/api/destinations', json={'name': 'IP', 'host': '198.51.100.10', 'port': 443}).json()['id']
@@ -78,6 +85,8 @@ class ExtensionTests(unittest.TestCase):
         self.assertTrue(server['check_result']['components']['iptables'])
         self.assertFalse(server['check_result']['components']['gost'])
         rid = self.add_rule()
+        self.client.post('/api/rules/' + rid + '/stop')
+        self.worker.run_once()
         self.store.execute('UPDATE rules SET check_result=? WHERE id=?', ('{"status":"inactive"}', rid))
         response = self.client.put('/api/servers/' + self.sid, json={
             'name': 'Renamed relay', 'host': '127.0.0.1', 'auth_type': 'password',
@@ -125,7 +134,7 @@ class ExtensionTests(unittest.TestCase):
         migrated = Store(self.temp.name)
         self.assertEqual(migrated.one('SELECT id FROM rules')['id'], rid)
         self.assertEqual(migrated.unseal(credential), 'private-test-password')
-        self.assertEqual(migrated.one('SELECT value FROM meta WHERE key=?', ('schema_version',))['value'], '2')
+        self.assertEqual(migrated.one('SELECT value FROM meta WHERE key=?', ('schema_version',))['value'], '3')
         self.assertEqual(migrated.rows('SELECT * FROM destinations'), [])
 
 

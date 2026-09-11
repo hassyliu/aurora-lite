@@ -36,7 +36,7 @@ class SSHRemote:
     def __init__(self, store):
         self.store = store
 
-    def execute(self, server, action, rule=None):
+    def execute(self, server, action, rule=None, on_progress=None):
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(PinnedHostKey(server['fingerprint']))
         credential = self.store.unseal(server['credential'])
@@ -55,9 +55,13 @@ class SSHRemote:
             if 'pkey' not in args:
                 raise ValueError('无法读取 SSH 私钥，请检查私钥格式和口令')
         try:
+            if on_progress:
+                on_progress('正在连接 SSH…')
             client.connect(**args)
+            if on_progress:
+                on_progress('SSH 已连接，开始执行远程操作。')
             source = Path(__file__).with_name('remote_agent.py').read_text(encoding='utf-8')
-            payload = {'action': action, 'rule': rule}
+            payload = {'action': action, 'rule': rule, 'progress': on_progress is not None}
             if action == 'apply':
                 payload['agent_source'] = source
             encoded = base64.b64encode(json.dumps(payload).encode()).decode()
@@ -68,13 +72,31 @@ class SSHRemote:
             channel.sendall(script.encode())
             channel.shutdown_write()
             output, errors = bytearray(), bytearray()
+            pending = bytearray()
+            result = None
+            received = 0
             deadline = time.monotonic() + (720 if action == 'prepare' else 150)
             while True:
                 if channel.recv_ready():
-                    output.extend(channel.recv(65536))
+                    part = channel.recv(65536)
+                    received += len(part)
+                    pending.extend(part)
+                    while b'\n' in pending:
+                        line, _, rest = pending.partition(b'\n')
+                        pending = bytearray(rest)
+                        try:
+                            record = json.loads(line)
+                        except (ValueError, UnicodeError):
+                            output.extend(line + b'\n')
+                            continue
+                        if isinstance(record, dict) and 'progress' in record:
+                            if on_progress:
+                                on_progress(record['progress'])
+                        else:
+                            result = record
                 if channel.recv_stderr_ready():
                     errors.extend(channel.recv_stderr(65536))
-                if len(output) + len(errors) > 2_000_000:
+                if received + len(errors) > 2_000_000:
                     raise RuntimeError('远程输出超过上限')
                 if channel.exit_status_ready() and not channel.recv_ready() and not channel.recv_stderr_ready():
                     break
@@ -84,6 +106,10 @@ class SSHRemote:
             if channel.recv_exit_status() != 0:
                 message = errors.decode(errors='replace')[-6000:] or output.decode(errors='replace')[-6000:]
                 raise RuntimeError(message or '远程操作失败')
-            return json.loads(output.decode().strip().splitlines()[-1])
+            if pending.strip():
+                result = json.loads(pending)
+            if not isinstance(result, dict):
+                raise RuntimeError('远程操作未返回有效结果')
+            return result
         finally:
             client.close()

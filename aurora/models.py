@@ -64,8 +64,12 @@ class DestinationOrder(BaseModel):
     @classmethod
     def valid_ids(cls, values):
         if len(values) != len(set(values)) or any(not re.fullmatch('[a-f0-9]{12}', v) for v in values):
-            raise ValueError('排序列表包含重复或无效的落地 ID')
+            raise ValueError('排序列表包含重复或无效的 ID')
         return values
+
+
+class ServerOrder(DestinationOrder):
+    """A validated complete list of server IDs."""
 
 
 class RuleInput(BaseModel):
@@ -78,6 +82,7 @@ class RuleInput(BaseModel):
     target_host: str
     target_port: int = Field(ge=1, le=65535)
     notes: str = Field(default='', max_length=1000)
+    destination_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{12}$')
 
     _target = field_validator('target_host')(host_value)
 

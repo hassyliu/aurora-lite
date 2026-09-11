@@ -66,7 +66,18 @@ class Store:
                 columns = {row['name'] for row in db.execute(f'PRAGMA table_info({table})')}
                 if 'check_result' not in columns:
                     db.execute(f"ALTER TABLE {table} ADD COLUMN check_result TEXT NOT NULL DEFAULT ''")
-            db.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version', '2')")
+            server_columns = {row['name'] for row in db.execute('PRAGMA table_info(servers)')}
+            if 'position' not in server_columns:
+                db.execute('ALTER TABLE servers ADD COLUMN position INTEGER NOT NULL DEFAULT 0')
+                ordered = db.execute('SELECT id FROM servers ORDER BY created DESC,id').fetchall()
+                db.executemany('UPDATE servers SET position=? WHERE id=?',
+                               [(index, row['id']) for index, row in enumerate(ordered)])
+            rule_columns = {row['name'] for row in db.execute('PRAGMA table_info(rules)')}
+            if 'destination_id' not in rule_columns:
+                db.execute('ALTER TABLE rules ADD COLUMN destination_id TEXT')
+                db.execute('''UPDATE rules SET destination_id=(SELECT MIN(id) FROM destinations d
+                    WHERE d.host=rules.target_host AND d.port=rules.target_port HAVING COUNT(*)=1)''')
+            db.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version', '3')")
         with self.connect(jobs=True) as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS jobs (

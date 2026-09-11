@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
-from .models import DestinationInput, DestinationOrder, Login, PasswordChange, Probe, RuleInput, ServerInput
+from .models import DestinationInput, DestinationOrder, Login, PasswordChange, Probe, RuleInput, ServerInput, ServerOrder
 from .remote import SSHRemote, probe
 from .remote_agent import gost_config, iptables_plan, service_text
 from .storage import ProcessLock, Store, password_hash, verify_password
@@ -103,6 +103,12 @@ def create_app(data_dir=None, start_worker=True, remote=None):
         if rule.listen_port == rule.target_port and rule.target_host in (rule.listen_ip, server['host']):
             raise HTTPException(422, '目标不能指向此规则自身，避免转发循环')
 
+    def rule_data(body):
+        data = body.model_dump()
+        if body.destination_id and not store.one('SELECT id FROM destinations WHERE id=?', (body.destination_id,)):
+            raise HTTPException(422, '所选落地已删除，请重新选择或手动填写目标')
+        return data
+
     @app.get('/api/status')
     def status():
         return {'initialized': store.one('SELECT username FROM admins') is not None, 'version': __version__}
@@ -164,8 +170,8 @@ def create_app(data_dir=None, start_worker=True, remote=None):
     @app.get('/api/servers', dependencies=secured)
     def servers():
         return with_check_results(store.rows('''SELECT s.id,s.name,s.host,s.port,s.username,s.auth_type,s.fingerprint,
-            s.notes,s.state,s.last_error,s.last_checked,s.check_result,s.created,COUNT(r.id) AS rule_count
-            FROM servers s LEFT JOIN rules r ON r.server_id=s.id GROUP BY s.id ORDER BY s.created DESC'''))
+            s.notes,s.state,s.last_error,s.last_checked,s.check_result,s.created,s.position,COUNT(r.id) AS rule_count
+            FROM servers s LEFT JOIN rules r ON r.server_id=s.id GROUP BY s.id ORDER BY s.position,s.created DESC,s.id'''))
 
     @app.post('/api/servers/probe', dependencies=secured)
     def host_probe(body: Probe):
@@ -182,8 +188,20 @@ def create_app(data_dir=None, start_worker=True, remote=None):
         data.update(id=secrets.token_hex(6), created=time.time())
         data['credential'], data['passphrase'] = store.seal(data['credential']), store.seal(data['passphrase'])
         with worker.guard, store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            data['position'] = db.execute('SELECT COALESCE(MAX(position),-1)+1 FROM servers').fetchone()[0]
             db.execute(f"INSERT INTO servers({','.join(data)}) VALUES({','.join('?' for _ in data)})", list(data.values()))
         return {'id': data['id']}
+
+    @app.put('/api/servers/order', dependencies=secured)
+    def reorder_servers(body: ServerOrder):
+        with worker.guard, store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            existing = {row['id'] for row in db.execute('SELECT id FROM servers')}
+            if existing != set(body.ids):
+                raise HTTPException(409, '服务器列表已变化，请刷新后重新排序')
+            db.executemany('UPDATE servers SET position=? WHERE id=?', enumerate(body.ids))
+        return {'ok': True}
 
     @app.put('/api/servers/{server_id}', dependencies=secured)
     def edit_server(server_id: str, body: ServerInput):
@@ -231,26 +249,38 @@ def create_app(data_dir=None, start_worker=True, remote=None):
         with worker.guard:
             require_idle(body.server_id)
             check_conflict(body)
-            data = body.model_dump()
-            data.update(id=secrets.token_hex(6), created=time.time())
+            data = rule_data(body)
+            data.update(id=secrets.token_hex(6), created=time.time(), desired='running')
             with store.connect() as db:
                 db.execute(f"INSERT INTO rules({','.join(data)}) VALUES({','.join('?' for _ in data)})", list(data.values()))
-        return {'id': data['id']}
+            try:
+                task_id = worker.enqueue('apply', body.server_id, data['id'])
+            except Exception:
+                store.execute('DELETE FROM rules WHERE id=?', (data['id'],))
+                raise
+        return {'id': data['id'], 'task_id': task_id}
 
     @app.put('/api/rules/{rule_id}', dependencies=secured)
     def edit_rule(rule_id: str, body: RuleInput):
         with worker.guard:
             old = rule_by_id(rule_id)
             require_idle(old['server_id'])
-            if old['state'] != 'stopped' or old['desired'] != 'stopped':
-                raise HTTPException(409, '请先成功停止规则，再修改配置')
             if body.server_id != old['server_id']:
                 raise HTTPException(422, '规则不能直接迁移服务器，请删除后在新服务器创建')
             check_conflict(body, rule_id)
-            data = body.model_dump()
+            data = rule_data(body)
             store.execute(f"UPDATE rules SET {','.join(k+'=?' for k in data)},last_error='',check_result='' WHERE id=?",
                           (*data.values(), rule_id))
-        return {'ok': True}
+            task_id = None
+            if old['desired'] == 'running':
+                try:
+                    task_id = worker.enqueue('apply', old['server_id'], rule_id)
+                except Exception:
+                    fields = [*data, 'last_error', 'check_result']
+                    store.execute(f"UPDATE rules SET {','.join(k+'=?' for k in fields)} WHERE id=?",
+                                  (*[old[k] for k in fields], rule_id))
+                    raise
+        return {'ok': True, 'task_id': task_id}
 
     @app.get('/api/rules/{rule_id}/preview', dependencies=secured)
     def preview(rule_id: str):
@@ -277,6 +307,29 @@ def create_app(data_dir=None, start_worker=True, remote=None):
     @app.get('/api/tasks', dependencies=secured)
     def tasks():
         return store.rows('SELECT * FROM jobs ORDER BY created DESC LIMIT 200', jobs=True)
+
+    @app.get('/api/tasks/{task_id}', dependencies=secured)
+    def task_detail(task_id: str):
+        task = store.one('SELECT * FROM jobs WHERE id=?', (task_id,), jobs=True)
+        if not task:
+            raise HTTPException(404, '任务不存在或已清理')
+        return task
+
+    @app.get('/api/rules/{rule_id}/logs', dependencies=secured)
+    def live_rule_logs(rule_id: str):
+        with worker.guard:
+            rule = rule_by_id(rule_id)
+            server = server_by_id(rule['server_id'])
+            require_idle(server['id'])
+            worker.sampling.add(server['id'])
+        try:
+            result = worker.remote.execute(server, 'logs', rule)
+            return {'log': worker.redact(server, result.get('message', '')), 'updated_at': time.time()}
+        except Exception as error:
+            raise HTTPException(502, worker.redact(server, str(error))) from None
+        finally:
+            with worker.guard:
+                worker.sampling.discard(server['id'])
 
     @app.get('/api/destinations', dependencies=secured)
     def destinations():
@@ -319,6 +372,7 @@ def create_app(data_dir=None, start_worker=True, remote=None):
         with store.connect() as db:
             if not db.execute('DELETE FROM destinations WHERE id=?', (destination_id,)).rowcount:
                 raise HTTPException(404, '落地地址不存在')
+            db.execute('UPDATE rules SET destination_id=NULL WHERE destination_id=?', (destination_id,))
         return {'ok': True}
 
     @app.get('/api/export', dependencies=secured)
