@@ -38,7 +38,8 @@ def main():
         package_name = distribution.metadata['Name']
         notice_dir = stage/'licenses'/package_name
         notice_dir.mkdir(parents=True, exist_ok=True)
-        (notice_dir/'package-metadata.txt').write_text(str(distribution.metadata), encoding='utf-8')
+        metadata = distribution.read_text('METADATA') or distribution.read_text('PKG-INFO') or (package_name+' '+distribution.version)
+        (notice_dir/'package-metadata.txt').write_text(metadata, encoding='utf-8')
         for file in distribution.files or []:
             if any(part.lower().startswith(('license','copying','copyright','notice')) for part in file.parts):
                 source = Path(distribution.locate_file(file))
@@ -56,7 +57,7 @@ def main():
         archive.add(stage, arcname=name)
     checksum(binary_archive)
     source_name = f'aurora-lite-{__version__}-source'
-    source_tar = subprocess.check_output(['git','archive','--format=tar','--prefix='+source_name+'/', 'HEAD'], cwd=ROOT)
+    source_tar = subprocess.check_output(['git','-c','safe.directory='+str(ROOT),'archive','--format=tar','--prefix='+source_name+'/', 'HEAD'], cwd=ROOT)
     source_archive = output/(source_name+'.tar.gz')
     source_archive.write_bytes(gzip.compress(source_tar, mtime=0))
     checksum(source_archive)
