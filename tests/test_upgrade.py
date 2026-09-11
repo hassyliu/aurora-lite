@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/upgrade.sh'
-PACKAGE = 'aurora-lite-0.3.0-linux-amd64-debian13'
+PACKAGE = 'aurora-lite-0.3.1-linux-amd64-debian13'
 
 BINARY = '''#!/usr/bin/env bash
 if [[ $1 == --version ]]; then
@@ -58,7 +58,7 @@ curl() {
     else
         local line current
         line=$("$PANEL/aurora-lite" --version); current=${line#Aurora Lite }
-        [[ $FIXTURE_MODE != health-fails || $current != 0.3.0 ]] || return 7
+        [[ $FIXTURE_MODE != health-fails || $current != 0.3.1 ]] || return 7
         printf '{"version":"%s","initialized":true}' "$current"
     fi
 }
@@ -88,7 +88,7 @@ class UpgradeTests(unittest.TestCase):
         self.write_binary(self.panel/'aurora-lite', self.old_binary)
         self.stage = self.root/PACKAGE
         self.stage.mkdir()
-        self.write_binary(self.stage/'aurora-lite', BINARY.replace('VERSION', '0.3.0'))
+        self.write_binary(self.stage/'aurora-lite', BINARY.replace('VERSION', '0.3.1'))
         self.state = self.root/'state'
         self.state.write_text('active')
         self.calls = self.root/'calls'
@@ -123,13 +123,23 @@ class UpgradeTests(unittest.TestCase):
     def test_success_backs_up_and_preserves_settings(self):
         result = self.run_upgrade()
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-        self.assertIn('升级成功：v0.3.0',result.stdout)
-        self.assertIn('Aurora Lite 0.3.0',(self.panel/'aurora-lite').read_text())
+        self.assertIn('升级成功：v0.3.1',result.stdout)
+        self.assertIn('Aurora Lite 0.3.1',(self.panel/'aurora-lite').read_text())
         self.assertEqual((self.panel/'settings.json').read_bytes(),self.settings)
         backup = next((self.root/'backups').iterdir())
         self.assertEqual((backup/'aurora-lite').read_text(),self.old_binary)
         with tarfile.open(backup/'data.tar.gz') as package:
             self.assertEqual(package.extractfile('data/aurora.db').read(),self.original['aurora.db'])
+
+    def test_upgrade_from_v030_preserves_original_backup(self):
+        self.old_binary = BINARY.replace('VERSION', '0.3.0')
+        self.write_binary(self.panel/'aurora-lite', self.old_binary)
+        self.test_success_backs_up_and_preserves_settings()
+
+    def test_failed_upgrade_from_v030_restores_v030_and_full_data(self):
+        self.old_binary = BINARY.replace('VERSION', '0.3.0')
+        self.write_binary(self.panel/'aurora-lite', self.old_binary)
+        self.test_failed_health_check_restores_program_and_full_data()
 
     def test_download_failure_does_not_stop_service(self):
         result=self.run_upgrade('download-fails')
@@ -163,7 +173,7 @@ class UpgradeTests(unittest.TestCase):
         self.assertTrue(list(self.panel.glob('data.failed-*')))
 
     def test_already_current_is_a_noop(self):
-        self.write_binary(self.panel/'aurora-lite',BINARY.replace('VERSION','0.3.0'))
+        self.write_binary(self.panel/'aurora-lite',BINARY.replace('VERSION','0.3.1'))
         result=self.run_upgrade()
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertIn('无需重复升级',result.stdout)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Debian 13 AMD64: upgrade the standard v0.2.1 binary deployment to v0.3.0.
+# Debian 13 AMD64: upgrade the standard v0.2.1/v0.3.0 binary deployment to v0.3.1.
 # Run as root: bash /root/upgrade-aurora-lite.sh
 set -Eeuo pipefail
 umask 077
@@ -7,10 +7,10 @@ umask 077
 PANEL=/opt/aurora-lite-panel
 SERVICE=aurora-lite-panel.service
 BACKUP_ROOT=/var/backups/aurora-lite
-VERSION=0.3.0
-PACKAGE=aurora-lite-0.3.0-linux-amd64-debian13
-BASE_URL=https://github.com/hassyliu/aurora-lite/releases/download/v0.3.0
-SHA256=65ba0fbe44a531163adee77456607b775f9f66fae1a448839ccdd875979cbf31
+VERSION=0.3.1
+PACKAGE=aurora-lite-0.3.1-linux-amd64-debian13
+BASE_URL=https://github.com/hassyliu/aurora-lite/releases/download/v0.3.1
+SHA256=36c48a73cebdd46f74c7872df383b6a10a78ea1a5c4c2ce064243beb69317d49
 HEALTH_URL=${AURORA_HEALTH_URL:-http://127.0.0.1:8000/api/status}
 work_dir=''
 backup_dir=''
@@ -178,7 +178,7 @@ main() {
         say "当前已是 v$VERSION，服务正常，无需重复升级。"
         return 0
     fi
-    [[ $old_version == 0.2.1 ]] || die "当前版本为 $old_version，本脚本仅用于 v0.2.1 → v0.3.0。"
+    [[ $old_version == 0.2.1 || $old_version == 0.3.0 ]] || die "当前版本为 $old_version，本脚本支持从 v0.2.1 或 v0.3.0 升级到 v$VERSION。"
     say "准备升级 $old_version → $VERSION，请等待已提交的面板任务结束。"
     download_and_check
     upgrade
