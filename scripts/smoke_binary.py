@@ -11,6 +11,9 @@ import tempfile
 import time
 import zipfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from aurora import __version__
+
 
 def main():
     binary = Path(sys.argv[1]).resolve()
@@ -41,7 +44,7 @@ def main():
                         response = connection.getresponse()
                         status = json.loads(response.read())
                         connection.close()
-                        assert response.status == 200 and status['version'] == '0.3.0'
+                        assert response.status == 200 and status['version'] == __version__
                         break
                     except (OSError, http.client.HTTPException):
                         if process.poll() is not None or time.monotonic() > deadline:

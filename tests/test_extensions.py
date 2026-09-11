@@ -89,7 +89,7 @@ class ExtensionTests(unittest.TestCase):
         self.worker.run_once()
         self.store.execute('UPDATE rules SET check_result=? WHERE id=?', ('{"status":"inactive"}', rid))
         response = self.client.put('/api/servers/' + self.sid, json={
-            'name': 'Renamed relay', 'host': '127.0.0.1', 'auth_type': 'password',
+            'name': 'Renamed relay', 'host': '127.0.0.2', 'auth_type': 'password',
             'credential': '', 'fingerprint': 'SHA256:' + 'a' * 43})
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(self.client.get('/api/servers').json()[0]['check_result'])

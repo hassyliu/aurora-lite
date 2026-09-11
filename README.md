@@ -6,9 +6,9 @@
 
 ## 开始使用
 
-- [0.3.0 更新与现有二进制升级说明](UPGRADE-0.3.0.md)
+- [0.3.1 更新与现有二进制升级说明](UPGRADE-0.3.1.md)
 - [0.2.1 二进制部署、备份与卸载说明](DEPLOY.md)
-- [0.3.0 Linux AMD64 二进制下载（Debian 13）](https://github.com/hassyliu/aurora-lite/releases/tag/v0.3.0)
+- [0.3.1 Linux AMD64 二进制下载（Debian 13）](https://github.com/hassyliu/aurora-lite/releases/tag/v0.3.1)
 - [二进制构建说明](BINARY.md)
 - [验证记录与适用范围](VALIDATION.md)
 
@@ -104,6 +104,8 @@ sudo journalctl -u aurora-lite-panel -f
 ```
 
 然后重启主控。`public_origin` 必须与浏览器实际地址完全一致，不带结尾斜杠。公网开放端口和云厂商安全组由你按实际用途配置；安装脚本不会自动开放主控入站端口。
+
+服务器名称和备注可随时修改，不影响运行中的规则或后台任务。更改 SSH 地址、端口、账号、认证信息或主机指纹前，需先停止该服务器的全部转发规则。
 
 ## 添加中转规则
 

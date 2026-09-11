@@ -2,7 +2,7 @@ name: Build and publish Aurora Lite
 
 on:
   push:
-    branches: [codex/release-v0.3.0]
+    branches: ['codex/release-v*']
   workflow_dispatch:
 
 permissions:

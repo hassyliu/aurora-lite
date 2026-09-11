@@ -26,12 +26,13 @@ def main():
     output = ROOT/'dist/release'
     output.mkdir(parents=True, exist_ok=True)
     name = f'aurora-lite-{__version__}-linux-amd64-debian13'
+    upgrade_name = f'UPGRADE-{__version__}.md'
     stage = ROOT/'work'/name
     stage.mkdir(parents=True, exist_ok=True)
     for source, target in [('dist/aurora-lite','aurora-lite'), ('dist/BUILD-INFO.json','BUILD-INFO.json'),
                            ('scripts/aurora-lite-binary.service','aurora-lite-binary.service'),
                            ('settings.example.json','settings.example.json'), ('README.md','README.md'),
-                           ('UPGRADE-0.3.0.md','UPGRADE-0.3.0.md'), ('VALIDATION.md','VALIDATION.md')]:
+                           (upgrade_name,upgrade_name), ('VALIDATION.md','VALIDATION.md')]:
         shutil.copy2(ROOT/source, stage/target)
     notices = []
     for distribution in importlib.metadata.distributions():
@@ -61,7 +62,7 @@ def main():
     source_archive = output/(source_name+'.tar.gz')
     source_archive.write_bytes(gzip.compress(source_tar, mtime=0))
     checksum(source_archive)
-    shutil.copy2(ROOT/'UPGRADE-0.3.0.md', output/'UPGRADE-0.3.0.md')
+    shutil.copy2(ROOT/upgrade_name, output/upgrade_name)
     shutil.copy2(ROOT/'dist/BUILD-INFO.json', output/'BUILD-INFO.json')
     print(json.dumps([{'name':p.name,'size':p.stat().st_size} for p in output.iterdir()], indent=2))
 

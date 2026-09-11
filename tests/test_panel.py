@@ -284,6 +284,59 @@ class PanelTests(unittest.TestCase):
         row = self.store.one('SELECT raw_in,bytes_in FROM rules WHERE id=?', (rid,))
         self.assertEqual((row['raw_in'], row['bytes_in']), (120, 120))
 
+    def test_server_metadata_edit_keeps_running_rules_checks_and_credentials(self):
+        sid, data = self.server()
+        rid, _ = self.rule(sid)
+        self.worker.run_once()
+        self.store.execute('UPDATE servers SET check_result=? WHERE id=?', ('{"status":"passed"}', sid))
+        self.store.execute('UPDATE rules SET check_result=? WHERE id=?', ('{"status":"passed"}', rid))
+        before = self.store.one('SELECT * FROM servers WHERE id=?', (sid,))
+        old_rule = self.store.one('SELECT * FROM rules WHERE id=?', (rid,))
+        calls = list(self.remote.calls)
+        jobs = self.store.rows('SELECT * FROM jobs', jobs=True)
+        result = self.client.put('/api/servers/'+sid, json={**data, 'name':'New display name', 'notes':'New notes', 'credential':''})
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertFalse(result.json()['connection_changed'])
+        after = self.store.one('SELECT * FROM servers WHERE id=?', (sid,))
+        self.assertEqual(after, {**before, 'name':'New display name', 'notes':'New notes'})
+        self.assertEqual(self.store.one('SELECT * FROM rules WHERE id=?', (rid,)), old_rule)
+        self.assertEqual(self.remote.calls, calls)
+        self.assertEqual(self.store.rows('SELECT * FROM jobs', jobs=True), jobs)
+
+    def test_server_metadata_edit_is_allowed_during_pending_task_and_same_password(self):
+        sid, data = self.server()
+        self.rule(sid)
+        before = self.store.one('SELECT credential FROM servers WHERE id=?', (sid,))
+        self.assertTrue(self.worker.busy(sid))
+        result = self.client.put('/api/servers/'+sid, json={**data, 'name':'Renamed while busy'})
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertFalse(result.json()['connection_changed'])
+        self.assertEqual(self.store.one('SELECT credential FROM servers WHERE id=?', (sid,)), before)
+        self.assertTrue(self.worker.run_once())
+        self.assertEqual(self.client.get('/api/rules').json()[0]['state'], 'running')
+
+    def test_ssh_connection_change_still_requires_stopping_rules(self):
+        sid, data = self.server()
+        rid, _ = self.rule(sid)
+        self.worker.run_once()
+        before = self.store.one('SELECT * FROM servers WHERE id=?', (sid,))
+        for field, value in [('host','192.0.2.11'), ('port',2222), ('username','operator'),
+                             ('credential','new-ssh-password'), ('fingerprint','SHA256:'+'b'*43)]:
+            with self.subTest(field=field):
+                result = self.client.put('/api/servers/'+sid, json={**data,field:value})
+                self.assertEqual(result.status_code,409,result.text)
+                self.assertIn('修改名称和备注无需停止',result.json()['detail'])
+                self.assertEqual(self.store.one('SELECT * FROM servers WHERE id=?', (sid,)), before)
+        self.client.post('/api/rules/'+rid+'/stop')
+        self.worker.run_once()
+        result = self.client.put('/api/servers/'+sid, json={**data, 'host':'192.0.2.11', 'credential':''})
+        self.assertEqual(result.status_code,200,result.text)
+        self.assertTrue(result.json()['connection_changed'])
+        after = self.client.get('/api/servers').json()[0]
+        self.assertEqual(after['host'],'192.0.2.11')
+        self.assertEqual(after['state'],'unchecked')
+        self.assertIsNone(after['check_result'])
+
 
 class RuleCompilerTests(unittest.TestCase):
     def setUp(self):

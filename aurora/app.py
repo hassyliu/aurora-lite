@@ -207,11 +207,21 @@ def create_app(data_dir=None, start_worker=True, remote=None):
     def edit_server(server_id: str, body: ServerInput):
         with worker.guard:
             old = server_by_id(server_id)
-            require_idle(server_id)
-            if store.one("SELECT id FROM rules WHERE server_id=? AND (state!='stopped' OR desired!='stopped')", (server_id,)):
-                raise HTTPException(409, '修改服务器连接前，请先停止其全部规则')
             if not body.credential and body.auth_type != old['auth_type']:
                 raise HTTPException(422, '更换认证方式时必须提供新凭据')
+            connection_changed = any(getattr(body, field) != old[field] for field in
+                                     ('host', 'port', 'username', 'auth_type', 'fingerprint'))
+            if body.credential:
+                connection_changed = (connection_changed
+                                      or body.credential != store.unseal(old['credential'])
+                                      or body.passphrase != store.unseal(old['passphrase']))
+            if not connection_changed:
+                # Names/notes do not affect SSH or forwarding, even while a task is running.
+                store.execute('UPDATE servers SET name=?,notes=? WHERE id=?', (body.name, body.notes, server_id))
+                return {'ok': True, 'connection_changed': False}
+            require_idle(server_id)
+            if store.one("SELECT id FROM rules WHERE server_id=? AND (state!='stopped' OR desired!='stopped')", (server_id,)):
+                raise HTTPException(409, '更改 SSH 地址、端口、账号、认证信息或主机指纹前，请先停止该服务器的全部转发规则；修改名称和备注无需停止。')
             data = body.model_dump()
             data['credential'] = store.seal(body.credential) if body.credential else old['credential']
             data['passphrase'] = store.seal(body.passphrase) if body.credential else old['passphrase']
@@ -219,7 +229,7 @@ def create_app(data_dir=None, start_worker=True, remote=None):
                 db.execute(f"UPDATE servers SET {','.join(k+'=?' for k in data)},state='unchecked',last_error='',check_result='' WHERE id=?",
                            [*data.values(), server_id])
                 db.execute("UPDATE rules SET check_result='' WHERE server_id=?", (server_id,))
-        return {'ok': True}
+        return {'ok': True, 'connection_changed': True}
 
     @app.delete('/api/servers/{server_id}', dependencies=secured)
     def delete_server(server_id: str):
