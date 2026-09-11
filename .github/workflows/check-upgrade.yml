@@ -1,0 +1,29 @@
+name: Verify upgrade script
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/upgrade.sh
+      - tests/test_upgrade.py
+      - .github/workflows/check-upgrade.yml
+permissions:
+  contents: read
+jobs:
+  upgrade-transaction:
+    runs-on: ubuntu-24.04
+    container: debian:13-slim
+    timeout-minutes: 10
+    steps:
+      - name: Install test tools
+        run: |
+          apt-get update
+          apt-get install -y python3 git curl ca-certificates shellcheck
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Check shell syntax and lint
+        run: |
+          bash -n scripts/upgrade.sh
+          shellcheck -S warning scripts/upgrade.sh
+      - name: Verify success, failures and rollback with isolated fixtures
+        run: python3 -m unittest discover -s tests -p test_upgrade.py -v

@@ -14,7 +14,25 @@
 
 数据库升级仅新增字段，保留管理员、服务器、规则、流量、密钥及手动停止状态。原有规则不会在升级时自动启用。
 
-## 直接下载二进制包（推荐）
+## 自动升级脚本（推荐）
+
+适用于运行中的 Debian 13 AMD64 v0.2.1 二进制部署，安装路径 `/opt/aurora-lite-panel`，服务账号 `aurora-panel`。先等待页面中的中转任务执行完毕，在 VPS 的 root 终端执行：
+
+```bash
+curl -fL --retry 3 https://raw.githubusercontent.com/hassyliu/aurora-lite/main/scripts/upgrade.sh -o /root/upgrade-aurora-lite.sh && bash /root/upgrade-aurora-lite.sh
+```
+
+脚本校验固定 v0.3.0 安装包的 SHA-256，下载和版本检查通过后才停止主控；将旧程序、配置及停止后的完整数据目录备份到 `/var/backups/aurora-lite/`。不修改设置、Nginx 或 systemd 服务文件，不重置密码。
+
+新程序启动和本机 API 检查通过后完成升级；否则自动恢复旧程序与升级前数据。失败启动期间的数据另存为安装目录中的 `data.failed-*`，便于排查。已经运行 v0.3.0 时不重复升级。
+
+后台端口不是 8000 时，用实际的本机地址运行，例如：
+
+```bash
+AURORA_HEALTH_URL=http://127.0.0.1:9000/api/status bash /root/upgrade-aurora-lite.sh
+```
+
+## 手动下载二进制包
 
 以下命令在 Debian 13 AMD64 VPS 的 Linux SSH 终端中以 root 执行：
 
